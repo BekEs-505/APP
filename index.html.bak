@@ -391,6 +391,19 @@
                         </div>
                         <a href="https://raw.githubuserhttps://github.com/dominhduy09/app-trollstore/releases/download/iPA-Trollstore/AppStore++_TrollStore_v1.0.3-2.ipa" class="download-btn">تنزيل</a>
                     </div>
+                    <div class="app-item">
+                        <div class="app-meta-box">
+                            <a href="https://raw.githubusercontent.com/BekEs-505/plus/refs/heads/main/CydiaIcon.png" target="_blank" class="app-icon-link">
+                                <img src="https://raw.githubusercontent.com/BekEs-505/plus/refs/heads/main/CydiaIcon.png" class="app-icon" alt="Icon">
+                            </a>
+                            <div class="app-info">
+                                <div class="app-name">Snap</div>
+                                <div class="app-version">14.0</div>
+                                <div class="app-desc">سناب بلس </div>
+                            </div>
+                        </div>
+                        <a href="https://github.com/dominhduy09/app-trollstore/releases/download/iPA-Trollstore/AppStore++_TrollStore_v1.0.3-2.ipa" class="download-btn">تنزيل</a>
+                    </div>
                     <!-- IOS_APPS_END -->
                 </div>
             </div>

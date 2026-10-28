@@ -1,21 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-#   APPS BEKES Panel v3.0
+#   APPS BEKES Panel v3.1  (مُصلَح)
 #   لوحة تحكم رفع التطبيقات - متوافقة مع iOS NewTerm
 #   © B6_7E | بيكاس
-#
-#   المتطلبات: bash 3.2+ ، git
-#
-#   التشغيل على iOS:
-#     cd /var/mobile/iosdump.repo
-#     bash panel.sh
-#
-#   التشغيل على Linux/macOS:
-#     chmod +x panel.sh && ./panel.sh
 # ============================================================
 
 # ---------- إعدادات ----------
-AUTO_PUSH=1   # 1 = رفع تلقائي بعد كل تعديل | 0 = تعطيل
+AUTO_PUSH=1
 
 # ---------- التحقق من bash ----------
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -30,7 +21,6 @@ RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'
 NC=$'\033[0m'
 
-# ألوان نيون 256 (احترافية)
 N_PINK=$'\033[1;38;5;207m'
 N_HOT=$'\033[1;38;5;198m'
 N_PURPLE=$'\033[1;38;5;141m'
@@ -76,16 +66,19 @@ trap 'echo; exit 130' INT
 # ---------- أدوات ----------
 hr() { printf "%s\n" "${N_PINK}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
 
-count_apps() {
-    local upper
-    upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+# ←─ عدّ التطبيقات من ملف معيّن (مُحسَّن) ─→
+count_apps_in() {
+    local file="$1" section="$2" upper
+    upper=$(echo "$section" | tr '[:lower:]' '[:upper:]')
     awk -v ms="<!-- ${upper}_APPS_START -->" -v me="<!-- ${upper}_APPS_END -->" '
         index($0, ms) { in_s = 1; next }
         index($0, me) { in_s = 0; next }
         in_s && /class="app-item"/ { c++ }
         END { print c + 0 }
-    ' "$HTML_FILE" 2>/dev/null
+    ' "$file" 2>/dev/null
 }
+
+count_apps() { count_apps_in "$HTML_FILE" "$1"; }
 
 # ---------- إدخال ----------
 ask() {
@@ -95,10 +88,7 @@ ask() {
     else
         printf "%s➤%s %s: " "$N_CYAN" "$NC" "$prompt" >&2
     fi
-    if ! IFS= read -r value; then
-        printf "\n"
-        exit 0
-    fi
+    if ! IFS= read -r value; then printf "\n"; exit 0; fi
     printf '%s' "${value:-$default}"
 }
 
@@ -115,9 +105,7 @@ ask_required() {
 confirm() {
     local prompt="$1" default="${2:-y}" value
     printf "%s?%s %s %s[y/n]%s [%s]: " "$N_GOLD" "$NC" "$prompt" "$DIM" "$NC" "$default" >&2
-    if ! IFS= read -r value; then
-        printf "\n"; exit 0
-    fi
+    if ! IFS= read -r value; then printf "\n"; exit 0; fi
     value="${value:-$default}"
     case "$value" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
@@ -130,9 +118,7 @@ html_escape() {
     printf '%s' "$s"
 }
 
-backup_html() {
-    cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null
-}
+backup_html() { cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null; }
 
 # ---------- أيقونة ----------
 handle_icon() {
@@ -150,11 +136,7 @@ handle_icon() {
         dest_dir="$ICONS_DIR/$section"
         mkdir -p "$dest_dir" 2>/dev/null
         dest="$dest_dir/${safe}.${ext}"
-        if cp "$input" "$dest" 2>/dev/null; then
-            printf '%s' "$dest"
-        else
-            printf '%s' "$default"
-        fi
+        if cp "$input" "$dest" 2>/dev/null; then printf '%s' "$dest"; else printf '%s' "$default"; fi
         return
     fi
     printf '%s' "$default"
@@ -195,7 +177,7 @@ insert_entry() {
     fi
 
     entry_file=$(safe_mktemp) || { printf "%s✗ فشل إنشاء ملف مؤقت%s\n" "$N_RED" "$NC" >&2; return 1; }
-    TMP_FILE=$(safe_mktemp) || { rm -f "$entry_file"; return 1; }
+    TMP_FILE=$(safe_mktemp) || { rm -f "$entry_file"; TMP_FILE=""; return 1; }
 
     printf '%s\n' "$entry" > "$entry_file"
     awk -v ms="$ms" -v me="$me" -v ef="$entry_file" '
@@ -205,9 +187,12 @@ insert_entry() {
             in_s = 0; print; next
         }
         { print }
-    ' "$HTML_FILE" > "$TMP_FILE" || { rm -f "$entry_file"; return 1; }
+    ' "$HTML_FILE" > "$TMP_FILE" 2>/dev/null || {
+        rm -f "$entry_file" "$TMP_FILE"; TMP_FILE=""
+        return 1
+    }
 
-    if [ ! -s "$TMP_FILE" ]; then rm -f "$entry_file"; return 1; fi
+    if [ ! -s "$TMP_FILE" ]; then rm -f "$entry_file" "$TMP_FILE"; TMP_FILE=""; return 1; fi
     mv "$TMP_FILE" "$HTML_FILE"; TMP_FILE=""
     rm -f "$entry_file"
     return 0
@@ -248,7 +233,6 @@ auto_push() {
     [ -d ".git" ] || return 0
     command -v git >/dev/null 2>&1 || return 0
 
-    # تجاهل ملفات النسخ الاحتياطي
     if [ ! -f .gitignore ] || ! grep -qxF '*.bak' .gitignore 2>/dev/null; then
         printf "*.bak\n" >> .gitignore 2>/dev/null
     fi
@@ -299,7 +283,9 @@ auto_push() {
     return 0
 }
 
-# ---------- حذف تطبيق ----------
+# ============================================================
+#   حذف تطبيق (مُصلَح)
+# ============================================================
 delete_app() {
     echo ""
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_HOT" "$NC"
@@ -367,23 +353,39 @@ delete_app() {
             }
             print
         }
-    ' "$HTML_FILE" > "$TMP_FILE" || return 1
+    ' "$HTML_FILE" > "$TMP_FILE" 2>/dev/null || {
+        rm -f "$TMP_FILE"; TMP_FILE=""
+        printf "%s✗ فشل تنفيذ AWK%s\n" "$N_RED" "$NC" >&2
+        return 1
+    }
 
-    local after; after=$(count_apps "$section")
+    # ←─ إصلاح 1: التأكد أن الملف المؤقت غير فارغ ─→
+    if [ ! -s "$TMP_FILE" ]; then
+        rm -f "$TMP_FILE"; TMP_FILE=""
+        printf "%s✗ فشل: الملف المؤقت فارغ%s\n" "$N_RED" "$NC" >&2
+        return 1
+    fi
+
+    # ←─ إصلاح 2 (جوهري): عدّ التطبيقات من TMP_FILE وليس HTML_FILE ─→
+    local after; after=$(count_apps_in "$TMP_FILE" "$section")
+
     if [ "$after" -ge "$before" ]; then
         rm -f "$TMP_FILE"; TMP_FILE=""
-        printf "%s✗ فشل الحذف%s\n" "$N_RED" "$NC" >&2
+        printf "%s✗ فشل الحذف: لم يتم العثور على التطبيق المطلوب%s\n" "$N_RED" "$NC" >&2
+        printf "  %sتحقق من أن index.html سليم وأن العلامات موجودة%s\n" "$DIM" "$NC" >&2
         return 1
     fi
 
     mv "$TMP_FILE" "$HTML_FILE"; TMP_FILE=""
-    printf "%s✓%s تم الحذف (العدد الآن: %s%s%s)\n" "$N_LIME" "$NC" "$N_GOLD" "$after" "$NC"
+    printf "%s✓%s تم الحذف بنجاح (العدد الآن: %s%s%s)\n" \
+        "$N_LIME" "$NC" "$N_GOLD" "$after" "$NC"
 
-    # ═══ الرفع التلقائي ═══
     auto_push
 }
 
-# ---------- إضافة تطبيق ----------
+# ============================================================
+#   إضافة تطبيق
+# ============================================================
 add_app() {
     echo ""
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_LIME" "$NC"
@@ -416,9 +418,16 @@ add_app() {
 
     local entry; entry=$(generate_entry "$name" "$version" "$desc" "$icon_path" "$link")
 
+    local before; before=$(count_apps "$section")
+
     if insert_entry "$section" "$entry"; then
-        printf "%s✓%s أُضيف %s%s%s إلى %s%s%s\n" "$N_LIME" "$NC" "$BOLD" "$name" "$NC" "$N_PURPLE" "$section" "$NC"
-        # ═══ الرفع التلقائي ═══
+        local after; after=$(count_apps "$section")
+        if [ "$after" -le "$before" ]; then
+            printf "%s✗ فشل: لم تتم الإضافة (تحقق من علامات HTML)%s\n" "$N_RED" "$NC" >&2
+            return 1
+        fi
+        printf "%s✓%s أُضيف %s%s%s إلى %s%s%s\n" \
+            "$N_LIME" "$NC" "$BOLD" "$name" "$NC" "$N_PURPLE" "$section" "$NC"
         auto_push
     else
         printf "%s✗ فشلت الإضافة%s\n" "$N_RED" "$NC" >&2
@@ -426,7 +435,9 @@ add_app() {
     fi
 }
 
-# ---------- رفع يدوي إلى GitHub ----------
+# ============================================================
+#   رفع يدوي إلى GitHub
+# ============================================================
 git_push() {
     echo ""
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_BLUE" "$NC"
@@ -439,7 +450,6 @@ git_push() {
         if is_ios; then
             printf "  على iOS (NewTerm):\n"
             printf "    ${N_CYAN}apt install git${NC}\n"
-            printf "  أو افتح ${BOLD}Sileo/Zebra${NC} وابحث عن 'git'\n"
         else
             printf "  Linux: ${N_CYAN}sudo apt install git${NC}\n"
             printf "  macOS: ${N_CYAN}brew install git${NC}\n"
@@ -507,26 +517,22 @@ git_push() {
 }
 
 # ============================================================
-#   الشعار الكبير - APPS BEKES
+#   الشعار الكبير
 # ============================================================
 banner() {
     echo ""
-    # خط علوي مزخرف
     printf "  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$N_HOT" "$NC"
     echo ""
-    # شعار APPS BEKES بخط ثلاثي
-    printf "  %s╔═╗ ╔═╗ ╔═╗ ╔═╗  ╔╗  ╔═╗ ╦╔═ ╔═╗ ╔═╗%s\n" "$N_PINK"   "$NC"
-    printf "  %s╠═╣ ╠═╝ ╠═╝ ╚═╗  ╠╩╗ ║╣  ╠╩╗ ║╣  ╚═╗%s\n" "$N_GOLD"   "$NC"
-    printf "  %s╩ ╩ ╩   ╩   ╚═╝  ╚═╝ ╚═╝ ╩ ╩ ╚═╝ ╚═╝%s\n" "$N_CYAN"   "$NC"
+    printf "  %s╔═╗ ╔═╗ ╔═╗ ╔═╗  ╔╗  ╔═╗ ╦╔═ ╔═╗ ╔═╗%s\n" "$N_PINK" "$NC"
+    printf "  %s╠═╣ ╠═╝ ╠═╝ ╚═╗  ╠╩╗ ║╣  ╠╩╗ ║╣  ╚═╗%s\n" "$N_GOLD" "$NC"
+    printf "  %s╩ ╩ ╩   ╩   ╚═╝  ╚═╝ ╚═╝ ╩ ╩ ╚═╝ ╚═╝%s\n" "$N_CYAN" "$NC"
     echo ""
     printf "  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$N_HOT" "$NC"
     echo ""
-    # الوصف والحقوق
     printf "      %s◆%s  %sلوحة تحكم رفع التطبيقات%s  %s◆%s\n" \
         "$N_GOLD" "$NC" "$BOLD" "$NC" "$N_GOLD" "$NC"
     printf "      %s© B6_7E | بيكاس%s\n" "$N_TEAL" "$NC"
     echo ""
-    # معلومات البيئة
     if is_ios; then
         printf "  %sالبيئة:%s %siOS (NewTerm)%s\n" "$N_GREY" "$NC" "$N_PURPLE" "$NC"
     fi
@@ -546,11 +552,11 @@ show_menu() {
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_PURPLE" "$NC"
     printf "%s│          %sالقائمة الرئيسية%s           │%s\n" "$N_PURPLE" "$BOLD" "$NC" "$NC"
     printf "%s╰─────────────────────────────────────╯%s\n" "$N_PURPLE" "$NC"
-    printf "  %s[1]%s  ➕  %sإضافة تطبيق%s\n"        "$N_LIME"   "$NC" "$BOLD" "$NC"
-    printf "  %s[2]%s  🗑   %sحذف تطبيق%s\n"         "$N_HOT"    "$NC" "$BOLD" "$NC"
-    printf "  %s[3]%s  ☰   %sعرض التطبيقات%s\n"     "$N_CYAN"   "$NC" "$BOLD" "$NC"
-    printf "  %s[4]%s  🚀  %sرفع إلى GitHub%s\n"     "$N_BLUE"   "$NC" "$BOLD" "$NC"
-    printf "  %s[5]%s  ✕   %sخروج%s\n"              "$N_RED"    "$NC" "$BOLD" "$NC"
+    printf "  %s[1]%s  ➕  %sإضافة تطبيق%s\n"    "$N_LIME" "$NC" "$BOLD" "$NC"
+    printf "  %s[2]%s  🗑   %sحذف تطبيق%s\n"     "$N_HOT"  "$NC" "$BOLD" "$NC"
+    printf "  %s[3]%s  ☰   %sعرض التطبيقات%s\n" "$N_CYAN" "$NC" "$BOLD" "$NC"
+    printf "  %s[4]%s  🚀  %sرفع إلى GitHub%s\n" "$N_BLUE" "$NC" "$BOLD" "$NC"
+    printf "  %s[5]%s  ✕   %sخروج%s\n"          "$N_RED"  "$NC" "$BOLD" "$NC"
     echo ""
     printf "%s➤%s اختر: " "$N_CYAN" "$NC" >&2
 }
@@ -599,7 +605,6 @@ main() {
         esac
     done
 
-    # فحص أخير للتغييرات غير المرفوعة (احتياطي)
     if [ -d ".git" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
         echo ""
         if confirm "توجد تغييرات غير مرفوعة. رفعها الآن إلى GitHub؟" "y"; then
