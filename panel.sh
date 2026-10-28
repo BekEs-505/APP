@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # ============================================================
-#   iosdump Panel v2.2
-#   - إصلاح مشكلة ظهور ? عند الكتابة (locale/stty)
-#   - رفع تلقائي إلى GitHub بعد إضافة كل تطبيق
-#   - متوافق مع iOS NewTerm + Linux + macOS
+#   iosdump Panel v2.3  -  النسخة الكاملة
+#   المزايا:
+#     - دعم كامل لـ iOS NewTerm (locale UTF-8 + stty)
+#     - رفع تلقائي إلى GitHub بعد كل إضافة
+#     - ترميز آمن لروابط التنزيل (يمنع كسر الأقواس/المسافات)
+#     - حماية صور (onerror fallback)
+#     - إضافة / حذف / عرض / إعدادات / تشخيص
+#     - نسخ احتياطي تلقائي index.html.bak
 # ============================================================
 
-# ---------- إصلاح مشكلة ? (locale UTF-8) ----------
+# ---------- إصلاح UTF-8 (مشكلة ? عند الكتابة) ----------
 export LANG="${LANG:-en_US.UTF-8}"
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
 export LC_CTYPE="${LC_CTYPE:-en_US.UTF-8}"
 export TERM="${TERM:-xterm-256color}"
 
-# fallback إذا لم تكن en_US.UTF-8 متوفرة
 if ! locale -a 2>/dev/null | grep -qi 'utf'; then
     for loc in C.UTF-8 C.utf8 en_US.utf8; do
         if locale -a 2>/dev/null | grep -qx "$loc"; then
@@ -22,7 +25,7 @@ if ! locale -a 2>/dev/null | grep -qi 'utf'; then
     done
 fi
 
-# ---------- إصلاح إعدادات الطرفية (NewTerm) ----------
+# ---------- إصلاح إعدادات الطرفية في NewTerm ----------
 if command -v stty >/dev/null 2>&1; then
     stty sane 2>/dev/null || true
     stty iutf8 2>/dev/null || true
@@ -43,8 +46,8 @@ BLUE=$'\033[0;34m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'
 NC=$'\033[0m'
 
 # ---------- الإعدادات ----------
-AUTO_PUSH=true           # رفع تلقائي بعد كل إضافة
-AUTO_PUSH_MSG_PREFIX="Add"  # بادئة رسالة الـ commit
+AUTO_PUSH=true
+AUTO_PUSH_MSG_PREFIX="Add"
 
 # ---------- المسارات ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -88,7 +91,6 @@ count_apps() {
 }
 
 # ---------- إدخال ----------
-# محاولة readline أولاً، ثم read عادي
 ask() {
     local prompt="$1" default="${2:-}" value="" p=""
     if [ -n "$default" ]; then
@@ -97,7 +99,6 @@ ask() {
         p=$(printf "%s➤%s %s: " "$CYAN" "$NC" "$prompt")
     fi
 
-    # محاولة readline (يحل مشاكل many terminals)
     if printf '%s' "$p" >&2 && read -e -r value 2>/dev/null; then
         :
     else
@@ -107,10 +108,7 @@ ask() {
         fi
     fi
 
-    # إزالة أي CR محتملة
     value="${value%$'\r'}"
-
-    # عرض ما تم إدخاله (يساعد على اكتشاف مشكلة ?)
     if [ -n "$value" ] && is_ios; then
         printf "  ${DIM}↳ تم استلام: [%s]${NC}\n" "$value" >&2
     fi
@@ -146,6 +144,25 @@ html_escape() {
     printf '%s' "$s"
 }
 
+# ---------- ترميز URL (يمنع كسر الأقواس/المسافات) ----------
+url_sanitize() {
+    local s="$1"
+    # تحويل blob → raw (لو المستخدم أدخل رابط GitHub blob)
+    case "$s" in
+        *github.com*/*/blob/*)
+            s=$(printf '%s' "$s" | sed 's|github\.com/\([^/]*\)/\([^/]*\)/blob/|github.com/\1/\2/raw/|')
+            ;;
+    esac
+    s="${s// /%20}"
+    s="${s//(/%28}"
+    s="${s//)/%29}"
+    s="${s//[/%5B}"
+    s="${s//]/%5D}"
+    s="${s//\{/%7B}"
+    s="${s//\}/%7D}"
+    printf '%s' "$s"
+}
+
 backup_html() { cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null; }
 
 # ---------- أيقونة ----------
@@ -158,7 +175,6 @@ handle_icon() {
     esac
     if [ -f "$input" ]; then
         local safe ext dest_dir dest
-        # LC_ALL=C لضمان تحويل آمن للأحرف غير اللاتينية
         safe=$(printf '%s' "$name" | LC_ALL=C tr -cs 'a-zA-Z0-9._-' '-' | LC_ALL=C tr 'A-Z' 'a-z' | sed 's/^-*//; s/-*$//')
         [ ${#safe} -lt 2 ] && safe="app_$(date +%s)"
         ext="${input##*.}"; ext=$(echo "$ext" | tr 'A-Z' 'a-z')
@@ -180,8 +196,8 @@ generate_entry() {
 
     echo "                    <div class=\"app-item\">"
     echo "                        <div class=\"app-meta-box\">"
-    echo "                            <a href=\"$e_icon\" target=\"_blank\" class=\"app-icon-link\">"
-    echo "                                <img src=\"$e_icon\" class=\"app-icon\" alt=\"Icon\">"
+    echo "                            <a href=\"$e_icon\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"app-icon-link\">"
+    echo "                                <img src=\"$e_icon\" class=\"app-icon\" alt=\"Icon\" onerror=\"this.onerror=null;this.src='https://via.placeholder.com/52?text=?';\">"
     echo "                            </a>"
     echo "                            <div class=\"app-info\">"
     echo "                                <div class=\"app-name\">$e_name</div>"
@@ -189,7 +205,7 @@ generate_entry() {
     [ -n "$e_desc" ] && echo "                                <div class=\"app-desc\">$e_desc</div>"
     echo "                            </div>"
     echo "                        </div>"
-    echo "                        <a href=\"$e_link\" class=\"download-btn\">تنزيل</a>"
+    echo "                        <a href=\"$e_link\" class=\"download-btn\" download rel=\"noopener noreferrer\" target=\"_blank\">تنزيل</a>"
     echo "                    </div>"
 }
 
@@ -329,14 +345,16 @@ add_app() {
     icon=$(ask "رابط صورة أو مسار محلي")
     link=$(ask_required "رابط التنزيل")
 
-    # ---- معاينة قبل الإدراج ----
+    # ترميز الرابط تلقائياً
+    local link_clean; link_clean=$(url_sanitize "$link")
+
     echo ""
     echo "${BOLD}── معاينة ──${NC}"
     echo "  ${DIM}الاسم:${NC}     $name"
     echo "  ${DIM}الإصدار:${NC}  $version"
     echo "  ${DIM}الوصف:${NC}    $desc"
     echo "  ${DIM}الأيقونة:${NC} $icon"
-    echo "  ${DIM}الرابط:${NC}   $link"
+    echo "  ${DIM}الرابط:${NC}   $link_clean"
     echo "  ${DIM}القسم:${NC}    $section"
     echo ""
     if ! confirm "هل البيانات صحيحة؟" "y"; then
@@ -347,12 +365,11 @@ add_app() {
     local icon_path; icon_path=$(handle_icon "$icon" "$section" "$name")
     [ -z "$icon_path" ] && icon_path="https://raw.githubusercontent.com/iosdumpzzz/MyIcon/refs/heads/main/Apps/default.png"
 
-    local entry; entry=$(generate_entry "$name" "$version" "$desc" "$icon_path" "$link")
+    local entry; entry=$(generate_entry "$name" "$version" "$desc" "$icon_path" "$link_clean")
 
     if insert_entry "$section" "$entry"; then
         printf "%s✓%s أُضيف ${BOLD}%s${NC} إلى ${BOLD}%s${NC}\n" "$GREEN" "$NC" "$name" "$section"
 
-        # ---- رفع تلقائي إلى GitHub ----
         if [ "$AUTO_PUSH" = "true" ]; then
             echo ""
             echo "${CYAN}${BOLD}── الرفع التلقائي إلى GitHub ──${NC}"
@@ -472,12 +489,8 @@ settings_menu() {
         printf "%s➤%s اختر: " "$CYAN" "$NC" >&2
         local c; IFS= read -r c || { echo; return; }
         case "$c" in
-            1)
-                if [ "$AUTO_PUSH" = "true" ]; then AUTO_PUSH=false; else AUTO_PUSH=true; fi
-                ;;
-            2)
-                AUTO_PUSH_MSG_PREFIX=$(ask "بادئة الرسالة" "$AUTO_PUSH_MSG_PREFIX")
-                ;;
+            1) if [ "$AUTO_PUSH" = "true" ]; then AUTO_PUSH=false; else AUTO_PUSH=true; fi ;;
+            2) AUTO_PUSH_MSG_PREFIX=$(ask "بادئة الرسالة" "$AUTO_PUSH_MSG_PREFIX") ;;
             3|*) return ;;
         esac
     done
@@ -504,17 +517,17 @@ diagnose_input() {
     echo "  ${BOLD}Hex dump:${NC}"
     printf '%s' "$test" | od -An -tx1c | head -3 | sed 's/^/    /'
     echo ""
-    echo "  ${DIM}إذا ظهر ? هنا أثناء الكتابة لكن Hex dump صحيح → مشكلة عرض فقط (حل: NewTerm Settings → Font)${NC}"
-    echo "  ${DIM}إذا ظهر ? في Hex dump → مشكلة إدخال (حل: استخدم لوحة مفاتيح إنجليزية أو hardware keyboard)${NC}"
+    echo "  ${DIM}إذا ظهر ? أثناء الكتابة لكن Hex صحيح → مشكلة عرض (غيّر خط NewTerm)${NC}"
+    echo "  ${DIM}إذا ظهر 3f في Hex → مشكلة إدخال (استخدم لوحة إنجليزية أو HW keyboard)${NC}"
     echo ""
-    confirm "هل تريد إعادة الاختبار؟" "n" && diagnose_input
+    confirm "إعادة الاختبار؟" "n" && diagnose_input
 }
 
 # ---------- شعار ----------
 banner() {
     echo ""
     printf "%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$CYAN$BOLD" "$NC"
-    printf "%s   🚀 iosdump Panel v2.2%s\n" "$MAGENTA$BOLD" "$NC"
+    printf "%s   🚀 iosdump Panel v2.3%s\n" "$MAGENTA$BOLD" "$NC"
     printf "%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$CYAN$BOLD" "$NC"
     if is_ios; then printf "  ${DIM}البيئة: iOS (NewTerm)${NC}\n"; fi
     printf "  ${DIM}iOS:${NC} ${BOLD}%s${NC}   ${DIM}Android:${NC} ${BOLD}%s${NC}   ${DIM}TV:${NC} ${BOLD}%s${NC}\n" \
@@ -549,7 +562,7 @@ main() {
         echo "  3) عرض التطبيقات"
         echo "  4) رفع يدوي إلى GitHub"
         echo "  5) الإعدادات"
-        echo "  6) تشخيص المدخلات (حل مشكلة ?)"
+        echo "  6) تشخيص المدخلات"
         echo "  7) خروج"
         echo ""
         printf "%s➤%s اختر: " "$CYAN" "$NC" >&2
