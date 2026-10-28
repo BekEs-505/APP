@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 # ============================================================
-#   iosdump Panel v2.1
-#   لوحة تحكم رفع التطبيقات - متوافقة مع iOS NewTerm
-#   المتطلبات: bash 3.2+ ، git
-#
-#   التشغيل على iOS:
-#     cd /var/mobile/iosdump.repo
-#     bash panel.sh
-#
-#   التشغيل على Linux/macOS:
-#     chmod +x panel.sh && ./panel.sh
+#   iosdump Panel v2.2
+#   - إصلاح مشكلة ظهور ? عند الكتابة (locale/stty)
+#   - رفع تلقائي إلى GitHub بعد إضافة كل تطبيق
+#   - متوافق مع iOS NewTerm + Linux + macOS
 # ============================================================
+
+# ---------- إصلاح مشكلة ? (locale UTF-8) ----------
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-en_US.UTF-8}"
+export TERM="${TERM:-xterm-256color}"
+
+# fallback إذا لم تكن en_US.UTF-8 متوفرة
+if ! locale -a 2>/dev/null | grep -qi 'utf'; then
+    for loc in C.UTF-8 C.utf8 en_US.utf8; do
+        if locale -a 2>/dev/null | grep -qx "$loc"; then
+            export LANG="$loc" LC_ALL="$loc" LC_CTYPE="$loc"
+            break
+        fi
+    done
+fi
+
+# ---------- إصلاح إعدادات الطرفية (NewTerm) ----------
+if command -v stty >/dev/null 2>&1; then
+    stty sane 2>/dev/null || true
+    stty iutf8 2>/dev/null || true
+    stty echo icanon 2>/dev/null || true
+fi
 
 # ---------- التحقق من bash ----------
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -25,6 +42,10 @@ RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'
 NC=$'\033[0m'
 
+# ---------- الإعدادات ----------
+AUTO_PUSH=true           # رفع تلقائي بعد كل إضافة
+AUTO_PUSH_MSG_PREFIX="Add"  # بادئة رسالة الـ commit
+
 # ---------- المسارات ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 cd "$SCRIPT_DIR" || { printf "%s✗ تعذر الدخول إلى %s%s\n" "$RED" "$SCRIPT_DIR" "$NC"; exit 1; }
@@ -33,11 +54,9 @@ ICONS_DIR="icons"
 TMP_FILE=""
 
 # ---------- كشف البيئة ----------
-is_ios() {
-    [ -d "/var/mobile" ] && [ "$(uname -s 2>/dev/null)" = "Darwin" ]
-}
+is_ios() { [ -d "/var/mobile" ] && [ "$(uname -s 2>/dev/null)" = "Darwin" ]; }
 
-# ---------- mktemp آمن (iOS BSD) ----------
+# ---------- mktemp آمن ----------
 safe_mktemp() {
     local f
     f=$(mktemp 2>/dev/null) && [ -f "$f" ] && { printf '%s' "$f"; return 0; }
@@ -59,8 +78,7 @@ trap 'echo; exit 130' INT
 hr() { printf "%s\n" "${DIM}──────────────────────────────────────────────${NC}"; }
 
 count_apps() {
-    local upper
-    upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+    local upper; upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
     awk -v ms="<!-- ${upper}_APPS_START -->" -v me="<!-- ${upper}_APPS_END -->" '
         index($0, ms) { in_s = 1; next }
         index($0, me) { in_s = 0; next }
@@ -70,17 +88,33 @@ count_apps() {
 }
 
 # ---------- إدخال ----------
+# محاولة readline أولاً، ثم read عادي
 ask() {
-    local prompt="$1" default="${2:-}" value
+    local prompt="$1" default="${2:-}" value="" p=""
     if [ -n "$default" ]; then
-        printf "%s➤%s %s %s[%s]%s: " "$CYAN" "$NC" "$prompt" "$DIM" "$default" "$NC" >&2
+        p=$(printf "%s➤%s %s %s[%s]%s: " "$CYAN" "$NC" "$prompt" "$DIM" "$default" "$NC")
     else
-        printf "%s➤%s %s: " "$CYAN" "$NC" "$prompt" >&2
+        p=$(printf "%s➤%s %s: " "$CYAN" "$NC" "$prompt")
     fi
-    if ! IFS= read -r value; then
-        printf "\n"
-        exit 0
+
+    # محاولة readline (يحل مشاكل many terminals)
+    if printf '%s' "$p" >&2 && read -e -r value 2>/dev/null; then
+        :
+    else
+        printf '%s' "$p" >&2
+        if ! IFS= read -r value; then
+            printf "\n"; exit 0
+        fi
     fi
+
+    # إزالة أي CR محتملة
+    value="${value%$'\r'}"
+
+    # عرض ما تم إدخاله (يساعد على اكتشاف مشكلة ?)
+    if [ -n "$value" ] && is_ios; then
+        printf "  ${DIM}↳ تم استلام: [%s]${NC}\n" "$value" >&2
+    fi
+
     printf '%s' "${value:-$default}"
 }
 
@@ -112,9 +146,7 @@ html_escape() {
     printf '%s' "$s"
 }
 
-backup_html() {
-    cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null
-}
+backup_html() { cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null; }
 
 # ---------- أيقونة ----------
 handle_icon() {
@@ -126,17 +158,14 @@ handle_icon() {
     esac
     if [ -f "$input" ]; then
         local safe ext dest_dir dest
-        safe=$(echo "$name" | tr -cs 'a-zA-Z0-9._-' '-' | tr 'A-Z' 'a-z' | sed 's/^-*//; s/-*$//')
+        # LC_ALL=C لضمان تحويل آمن للأحرف غير اللاتينية
+        safe=$(printf '%s' "$name" | LC_ALL=C tr -cs 'a-zA-Z0-9._-' '-' | LC_ALL=C tr 'A-Z' 'a-z' | sed 's/^-*//; s/-*$//')
         [ ${#safe} -lt 2 ] && safe="app_$(date +%s)"
         ext="${input##*.}"; ext=$(echo "$ext" | tr 'A-Z' 'a-z')
         dest_dir="$ICONS_DIR/$section"
         mkdir -p "$dest_dir" 2>/dev/null
         dest="$dest_dir/${safe}.${ext}"
-        if cp "$input" "$dest" 2>/dev/null; then
-            printf '%s' "$dest"
-        else
-            printf '%s' "$default"
-        fi
+        if cp "$input" "$dest" 2>/dev/null; then printf '%s' "$dest"; else printf '%s' "$default"; fi
         return
     fi
     printf '%s' "$default"
@@ -165,11 +194,9 @@ generate_entry() {
 }
 
 insert_entry() {
-    local section="$1" entry="$2"
-    local upper ms me entry_file
+    local section="$1" entry="$2" upper ms me entry_file
     upper=$(echo "$section" | tr '[:lower:]' '[:upper:]')
-    ms="<!-- ${upper}_APPS_START -->"
-    me="<!-- ${upper}_APPS_END -->"
+    ms="<!-- ${upper}_APPS_START -->"; me="<!-- ${upper}_APPS_END -->"
 
     if ! grep -qF "$me" "$HTML_FILE"; then
         printf "%s✗ علامة الإدراج غير موجودة: %s%s\n" "$RED" "$me" "$NC" >&2
@@ -178,8 +205,8 @@ insert_entry() {
 
     entry_file=$(safe_mktemp) || { printf "%s✗ فشل إنشاء ملف مؤقت%s\n" "$RED" "$NC" >&2; return 1; }
     TMP_FILE=$(safe_mktemp) || { rm -f "$entry_file"; return 1; }
-
     printf '%s\n' "$entry" > "$entry_file"
+
     awk -v ms="$ms" -v me="$me" -v ef="$entry_file" '
         index($0, ms) { in_s = 1; print; next }
         index($0, me) {
@@ -191,8 +218,7 @@ insert_entry() {
 
     if [ ! -s "$TMP_FILE" ]; then rm -f "$entry_file"; return 1; fi
     mv "$TMP_FILE" "$HTML_FILE"; TMP_FILE=""
-    rm -f "$entry_file"
-    return 0
+    rm -f "$entry_file"; return 0
 }
 
 # ---------- عرض قائمة التطبيقات ----------
@@ -237,29 +263,20 @@ delete_app() {
     esac
 
     local before; before=$(count_apps "$section")
-    if [ "$before" -eq 0 ]; then
-        printf "%s⚠ لا توجد تطبيقات في هذا القسم%s\n" "$YELLOW" "$NC"
-        return 1
-    fi
+    if [ "$before" -eq 0 ]; then printf "%s⚠ لا توجد تطبيقات%s\n" "$YELLOW" "$NC"; return 1; fi
 
-    echo ""
-    echo "${BOLD}التطبيقات الحالية:${NC}"
-    list_apps "$section"
-    echo ""
+    echo ""; echo "${BOLD}التطبيقات الحالية:${NC}"; list_apps "$section"; echo ""
 
-    local num
-    num=$(ask_required "رقم التطبيق للحذف")
+    local num; num=$(ask_required "رقم التطبيق للحذف")
     case "$num" in ''|*[!0-9]*) printf "%s✗ رقم غير صالح%s\n" "$RED" "$NC" >&2; return 1 ;; esac
     if [ "$num" -lt 1 ] || [ "$num" -gt "$before" ]; then
         printf "%s✗ الرقم خارج النطاق%s\n" "$RED" "$NC" >&2; return 1
     fi
-
     if ! confirm "متأكد من حذف التطبيق رقم $num ؟" "n"; then
         echo "${DIM}تم الإلغاء${NC}"; return 0
     fi
 
     backup_html
-
     local upper ms me
     upper=$(echo "$section" | tr '[:lower:]' '[:upper:]')
     ms="<!-- ${upper}_APPS_START -->"; me="<!-- ${upper}_APPS_END -->"
@@ -274,15 +291,9 @@ delete_app() {
             line=$0
             n_o = gsub(/<div[ >]/, "<div ", line)
             n_c = gsub(/<\/div>/, "</div>", line)
-            if (depth == 0 && $0 ~ /class="app-item"/) {
-                idx++
-                if (idx == target) skip=1
-            }
+            if (depth == 0 && $0 ~ /class="app-item"/) { idx++; if (idx == target) skip=1 }
             depth += n_o - n_c
-            if (skip) {
-                if (depth == 0) skip=0
-                next
-            }
+            if (skip) { if (depth == 0) skip=0; next }
             print
         }
     ' "$HTML_FILE" > "$TMP_FILE" || return 1
@@ -290,10 +301,8 @@ delete_app() {
     local after; after=$(count_apps "$section")
     if [ "$after" -ge "$before" ]; then
         rm -f "$TMP_FILE"; TMP_FILE=""
-        printf "%s✗ فشل الحذف%s\n" "$RED" "$NC" >&2
-        return 1
+        printf "%s✗ فشل الحذف%s\n" "$RED" "$NC" >&2; return 1
     fi
-
     mv "$TMP_FILE" "$HTML_FILE"; TMP_FILE=""
     printf "%s✓%s تم الحذف (العدد الآن: %s)\n" "$GREEN" "$NC" "$after"
 }
@@ -320,6 +329,20 @@ add_app() {
     icon=$(ask "رابط صورة أو مسار محلي")
     link=$(ask_required "رابط التنزيل")
 
+    # ---- معاينة قبل الإدراج ----
+    echo ""
+    echo "${BOLD}── معاينة ──${NC}"
+    echo "  ${DIM}الاسم:${NC}     $name"
+    echo "  ${DIM}الإصدار:${NC}  $version"
+    echo "  ${DIM}الوصف:${NC}    $desc"
+    echo "  ${DIM}الأيقونة:${NC} $icon"
+    echo "  ${DIM}الرابط:${NC}   $link"
+    echo "  ${DIM}القسم:${NC}    $section"
+    echo ""
+    if ! confirm "هل البيانات صحيحة؟" "y"; then
+        echo "${DIM}تم الإلغاء${NC}"; return 0
+    fi
+
     backup_html
     local icon_path; icon_path=$(handle_icon "$icon" "$section" "$name")
     [ -z "$icon_path" ] && icon_path="https://raw.githubusercontent.com/iosdumpzzz/MyIcon/refs/heads/main/Apps/default.png"
@@ -328,6 +351,16 @@ add_app() {
 
     if insert_entry "$section" "$entry"; then
         printf "%s✓%s أُضيف ${BOLD}%s${NC} إلى ${BOLD}%s${NC}\n" "$GREEN" "$NC" "$name" "$section"
+
+        # ---- رفع تلقائي إلى GitHub ----
+        if [ "$AUTO_PUSH" = "true" ]; then
+            echo ""
+            echo "${CYAN}${BOLD}── الرفع التلقائي إلى GitHub ──${NC}"
+            git_push "${AUTO_PUSH_MSG_PREFIX} ${name}"
+        else
+            echo ""
+            echo "${DIM}ⓘ الرفع التلقائي معطّل. استخدم الخيار 4 من القائمة الرئيسية للرفع يدوياً.${NC}"
+        fi
     else
         printf "%s✗ فشلت الإضافة%s\n" "$RED" "$NC" >&2
         return 1
@@ -336,8 +369,11 @@ add_app() {
 
 # ---------- رفع إلى GitHub ----------
 git_push() {
+    local auto_msg="${1:-}"
     echo ""
-    echo "${BOLD}=== رفع التغييرات إلى GitHub ===${NC}"
+    if [ -z "$auto_msg" ]; then
+        echo "${BOLD}=== رفع التغييرات إلى GitHub ===${NC}"
+    fi
     echo ""
 
     if ! command -v git >/dev/null 2>&1; then
@@ -355,19 +391,31 @@ git_push() {
 
     if [ ! -d ".git" ]; then
         echo "${YELLOW}⚠ هذا ليس مستودع Git${NC}"
-        confirm "هل تريد تهيئته الآن؟" "y" || return 1
-        local remote; remote=$(ask_required "رابط المستودع (https://github.com/user/repo.git)")
-        git init -q
-        git branch -M main 2>/dev/null || true
-        git remote add origin "$remote" 2>/dev/null || true
-        printf "%s✓%s تمت التهيئة\n" "$GREEN" "$NC"
+        if [ -z "$auto_msg" ]; then
+            confirm "هل تريد تهيئته الآن؟" "y" || return 1
+            local remote; remote=$(ask_required "رابط المستودع (https://github.com/user/repo.git)")
+            git init -q
+            git branch -M main 2>/dev/null || true
+            git remote add origin "$remote" 2>/dev/null || true
+            printf "%s✓%s تمت التهيئة\n" "$GREEN" "$NC"
+        else
+            printf "%s✗ لا يمكن الرفع التلقائي - المستودع غير مهيأ%s\n" "$RED" "$NC" >&2
+            echo "${DIM}  عطّل الرفع التلقائي أو استخدم الخيار 4 للتهيئة اليدوية.${NC}"
+            return 1
+        fi
     fi
 
-    local msg; msg=$(ask "رسالة الـ commit" "Init")
-    [ -z "$msg" ] && msg="Init"
+    local msg
+    if [ -n "$auto_msg" ]; then
+        msg="$auto_msg"
+        echo "${DIM}رسالة commit: $msg${NC}"
+    else
+        msg=$(ask "رسالة الـ commit" "Init")
+        [ -z "$msg" ] && msg="Init"
+    fi
 
     echo ""
-    echo "${DIM}$ git add --all${NC}"
+    echo "${DIM}\$ git add --all${NC}"
     git add --all
 
     local has_changes=0
@@ -378,14 +426,14 @@ git_push() {
     fi
 
     if [ "$has_changes" -eq 1 ]; then
-        echo "${DIM}$ git commit -m \"$msg\"${NC}"
+        echo "${DIM}\$ git commit -m \"$msg\"${NC}"
         git commit -m "$msg"
     else
         echo "${YELLOW}⚠ لا توجد تغييرات جديدة${NC}"
     fi
 
     echo ""
-    echo "${DIM}$ git push${NC}"
+    echo "${DIM}\$ git push${NC}"
     local branch push_ok=0
     branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo main)
     if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
@@ -407,15 +455,75 @@ git_push() {
     fi
 }
 
+# ---------- الإعدادات ----------
+settings_menu() {
+    while true; do
+        echo ""
+        echo "${BOLD}=== الإعدادات ===${NC}"
+        echo ""
+        if [ "$AUTO_PUSH" = "true" ]; then
+            echo "  1) الرفع التلقائي: ${GREEN}مفعّل${NC}"
+        else
+            echo "  1) الرفع التلقائي: ${RED}معطّل${NC}"
+        fi
+        echo "  2) بادئة رسالة commit: ${CYAN}$AUTO_PUSH_MSG_PREFIX${NC}"
+        echo "  3) رجوع"
+        echo ""
+        printf "%s➤%s اختر: " "$CYAN" "$NC" >&2
+        local c; IFS= read -r c || { echo; return; }
+        case "$c" in
+            1)
+                if [ "$AUTO_PUSH" = "true" ]; then AUTO_PUSH=false; else AUTO_PUSH=true; fi
+                ;;
+            2)
+                AUTO_PUSH_MSG_PREFIX=$(ask "بادئة الرسالة" "$AUTO_PUSH_MSG_PREFIX")
+                ;;
+            3|*) return ;;
+        esac
+    done
+}
+
+# ---------- تشخيص المدخلات ----------
+diagnose_input() {
+    echo ""
+    echo "${BOLD}=== تشخيص المدخلات (لحل مشكلة ?) ===${NC}"
+    echo ""
+    echo "  ${DIM}LANG=${NC}$LANG"
+    echo "  ${DIM}LC_ALL=${NC}$LC_ALL"
+    echo "  ${DIM}LC_CTYPE=${NC}$LC_CTYPE"
+    echo "  ${DIM}TERM=${NC}$TERM"
+    echo ""
+    echo "  اللغات المتوفرة (UTF-8):"
+    locale -a 2>/dev/null | grep -i utf | head -5 | sed 's/^/    /'
+    echo ""
+    local test
+    test=$(ask "اكتب جملة تجريبية (مسافات + عربي)")
+    echo ""
+    echo "  ${BOLD}ما تم استلامه:${NC} [$test]"
+    echo "  ${BOLD}عدد الأحرف:${NC}  ${#test}"
+    echo "  ${BOLD}Hex dump:${NC}"
+    printf '%s' "$test" | od -An -tx1c | head -3 | sed 's/^/    /'
+    echo ""
+    echo "  ${DIM}إذا ظهر ? هنا أثناء الكتابة لكن Hex dump صحيح → مشكلة عرض فقط (حل: NewTerm Settings → Font)${NC}"
+    echo "  ${DIM}إذا ظهر ? في Hex dump → مشكلة إدخال (حل: استخدم لوحة مفاتيح إنجليزية أو hardware keyboard)${NC}"
+    echo ""
+    confirm "هل تريد إعادة الاختبار؟" "n" && diagnose_input
+}
+
 # ---------- شعار ----------
 banner() {
     echo ""
     printf "%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$CYAN$BOLD" "$NC"
-    printf "%s   🚀 iosdump Panel %s - لوحة تحكم التطبيقات%s\n" "$MAGENTA$BOLD" "$DIM" "$NC"
+    printf "%s   🚀 iosdump Panel v2.2%s\n" "$MAGENTA$BOLD" "$NC"
     printf "%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$CYAN$BOLD" "$NC"
     if is_ios; then printf "  ${DIM}البيئة: iOS (NewTerm)${NC}\n"; fi
     printf "  ${DIM}iOS:${NC} ${BOLD}%s${NC}   ${DIM}Android:${NC} ${BOLD}%s${NC}   ${DIM}TV:${NC} ${BOLD}%s${NC}\n" \
         "$(count_apps ios)" "$(count_apps android)" "$(count_apps tv)"
+    if [ "$AUTO_PUSH" = "true" ]; then
+        printf "  ${DIM}الرفع التلقائي:${NC} ${GREEN}مفعّل${NC}\n"
+    else
+        printf "  ${DIM}الرفع التلقائي:${NC} ${RED}معطّل${NC}\n"
+    fi
     hr
     echo ""
 }
@@ -429,9 +537,8 @@ main() {
         exit 1
     fi
 
-    # كشف CRLF
     if grep -q $'\r' "$HTML_FILE" 2>/dev/null; then
-        printf "%s⚠ الملف بأسطر Windows (CRLF) - قد يفشل الإدراج/الحذف%s\n" "$YELLOW" "$NC"
+        printf "%s⚠ الملف بأسطر Windows (CRLF)%s\n" "$YELLOW" "$NC"
         printf "  ${DIM}الحل: tr -d '\\\\r' < index.html > t && mv t index.html${NC}\n\n"
     fi
 
@@ -440,8 +547,10 @@ main() {
         echo "  1) إضافة تطبيق"
         echo "  2) حذف تطبيق"
         echo "  3) عرض التطبيقات"
-        echo "  4) رفع إلى GitHub"
-        echo "  5) خروج"
+        echo "  4) رفع يدوي إلى GitHub"
+        echo "  5) الإعدادات"
+        echo "  6) تشخيص المدخلات (حل مشكلة ?)"
+        echo "  7) خروج"
         echo ""
         printf "%s➤%s اختر: " "$CYAN" "$NC" >&2
         local choice; IFS= read -r choice || { echo; exit 0; }
@@ -459,7 +568,9 @@ main() {
                 done
                 ;;
             4) git_push ;;
-            5|q|Q|exit) break ;;
+            5) settings_menu; banner ;;
+            6) diagnose_input ;;
+            7|q|Q|exit) break ;;
             *) printf "%s✗ خيار غير معروف%s\n" "$RED" "$NC" >&2 ;;
         esac
     done
