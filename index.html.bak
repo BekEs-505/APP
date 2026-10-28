@@ -347,17 +347,6 @@
                     </div>
                     <div class="app-item">
                         <div class="app-meta-box">
-                            <a href="https://raw.githubusercontent.com/iosdumpzzz/MyIcon/refs/heads/main/Apps/default.png" target="_blank" class="app-icon-link">
-                                <img src="https://raw.githubusercontent.com/iosdumpzzz/MyIcon/refs/heads/main/Apps/default.png" class="app-icon" alt="Icon">
-                            </a>
-                            <div class="app-info">
-                                <div class="app-name"></div>
-                            </div>
-                        </div>
-                        <a href="" class="download-btn">تنزيل</a>
-                    </div>
-                    <div class="app-item">
-                        <div class="app-meta-box">
                             <a href="https://raw.githubusercontent.com/BekEs-505/plus/refs/heads/main/CydiaIcon.png" target="_blank" class="app-icon-link">
                                 <img src="https://raw.githubusercontent.com/BekEs-505/plus/refs/heads/main/CydiaIcon.png" class="app-icon" alt="Icon">
                             </a>
