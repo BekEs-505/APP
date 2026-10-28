@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-#   APPS BEKES Panel v3.2
+#   APPS BEKES Panel v3.3
 #   لوحة تحكم رفع التطبيقات - متوافقة مع iOS NewTerm
 #   © B6_7E | بيكاس
 # ============================================================
+
+# ---------- فرض ترميز UTF-8 لمنع تشوه الحروف العربية ----------
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 
 # ---------- إعدادات ----------
 AUTO_PUSH=1
@@ -109,11 +113,10 @@ confirm() {
     case "$value" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
-# ←─ إدخال مع الإبقاء على القيمة الحالية عند تركه فارغاً ─→
+# ←─ إدخال مع الإبقاء على القيمة الحالية (بدون قص للحروف) ─→
 prompt_keep() {
     local label="$1" current="$2"
     local display="$current"
-    if [ ${#display} -gt 45 ]; then display="${display:0:42}..."; fi
 
     if [ -n "$current" ]; then
         printf "%s➤%s %s\n" "$N_CYAN" "$NC" "$label" >&2
@@ -140,24 +143,15 @@ html_escape() {
     printf '%s' "$s"
 }
 
-# ←─ فكّ الترميز (scan أحادي المسار = صحيح 100%) ─→
+# ←─ فكّ الترميز (بلغة الباش الصافية لضمان سلامة العربية) ─→
 html_unescape() {
-    printf '%s' "$1" | awk '{
-        s = $0; out = ""; n = length(s); i = 1
-        while (i <= n) {
-            c = substr(s, i, 1)
-            if (c == "&") {
-                r = substr(s, i, 6)
-                if (substr(r, 1, 5) == "&amp;")  { out = out "&";  i += 5; continue }
-                if (substr(r, 1, 4) == "&lt;")   { out = out "<";  i += 4; continue }
-                if (substr(r, 1, 4) == "&gt;")   { out = out ">";  i += 4; continue }
-                if (substr(r, 1, 6) == "&quot;") { out = out "\""; i += 6; continue }
-                if (substr(r, 1, 5) == "&#39;")  { out = out "\047"; i += 5; continue }
-            }
-            out = out c; i++
-        }
-        printf "%s", out
-    }'
+    local s="$1"
+    s="${s//&amp;/&}"
+    s="${s//&lt;/<}"
+    s="${s//&gt;/>}"
+    s="${s//&quot;/\"/}"
+    s="${s//&#39;/\'}"
+    printf '%s' "$s"
 }
 
 backup_html() { cp "$HTML_FILE" "${HTML_FILE}.bak" 2>/dev/null; }
@@ -267,7 +261,7 @@ list_apps() {
     ' "$HTML_FILE" 2>/dev/null
 }
 
-# ←─ تحديد نطاق أسطر تطبيق معيّن (start end) ─→
+# ←─ تحديد نطاق أسطر تطبيق معيّن ─→
 get_app_range() {
     local file="$1" section="$2" target="$3"
     local upper ms me
@@ -385,7 +379,7 @@ auto_push() {
 }
 
 # ============================================================
-#   ✎ تعديل تطبيق (جديد)
+#   ✎ تعديل تطبيق
 # ============================================================
 edit_app() {
     echo ""
@@ -423,7 +417,6 @@ edit_app() {
         printf "%s✗ الرقم خارج النطاق%s\n" "$N_RED" "$NC" >&2; return 1
     fi
 
-    # تحديد نطاق الأسطر
     local range; range=$(get_app_range "$HTML_FILE" "$section" "$num")
     if [ -z "$range" ]; then
         printf "%s✗ فشل تحديد موقع التطبيق%s\n" "$N_RED" "$NC" >&2
@@ -433,7 +426,6 @@ edit_app() {
     start=$(echo "$range" | awk '{print $1}')
     end=$(echo "$range" | awk '{print $2}')
 
-    # استخراج القيم الحالية
     local cur_name cur_version cur_desc cur_icon cur_link
     cur_name=$(extract_by_class "$HTML_FILE" "$start" "$end" "app-name")
     cur_version=$(extract_by_class "$HTML_FILE" "$start" "$end" "app-version")
@@ -441,7 +433,6 @@ edit_app() {
     cur_icon=$(extract_href_by_class "$HTML_FILE" "$start" "$end" "app-icon-link")
     cur_link=$(extract_href_by_class "$HTML_FILE" "$start" "$end" "download-btn")
 
-    # فكّ الترميز
     cur_name=$(html_unescape "$cur_name")
     cur_version=$(html_unescape "$cur_version")
     cur_desc=$(html_unescape "$cur_desc")
@@ -461,7 +452,6 @@ edit_app() {
     new_icon_input=$(prompt_keep "الأيقونة (رابط أو مسار محلي)" "$cur_icon")
     new_link=$(prompt_keep "رابط التنزيل" "$cur_link")
 
-    # تحقق من الحقول الإلزامية
     if [ -z "$new_name" ]; then
         printf "%s✗ اسم التطبيق لا يمكن أن يكون فارغاً%s\n" "$N_RED" "$NC" >&2
         return 1
@@ -471,7 +461,6 @@ edit_app() {
         return 1
     fi
 
-    # معالجة الأيقونة: إذا لم تتغيّر نستخدمها كما هي (تفادي copy لنفس الملف)
     local new_icon
     if [ "$new_icon_input" = "$cur_icon" ]; then
         new_icon="$cur_icon"
@@ -481,10 +470,8 @@ edit_app() {
     [ -z "$new_icon" ] && new_icon="$cur_icon"
     [ -z "$new_icon" ] && new_icon="https://raw.githubusercontent.com/iosdumpzzz/MyIcon/refs/heads/main/Apps/default.png"
 
-    # بناء الإدخال الجديد
     local entry; entry=$(generate_entry "$new_name" "$new_version" "$new_desc" "$new_icon" "$new_link")
 
-    # معاينة
     echo ""
     printf "%s━━━ معاينة التعديل ━━━%s\n" "$N_TEAL" "$NC"
     printf "  %sالاسم:%s     %s%s%s\n" "$N_GREY" "$NC" "$BOLD" "$new_name" "$NC"
@@ -523,7 +510,6 @@ edit_app() {
         return 1
     fi
 
-    # التحقق: عدد التطبيقات يجب أن يبقى كما هو
     local after; after=$(count_apps_in "$TMP_FILE" "$section")
     if [ "$after" -ne "$total" ]; then
         rm -f "$entry_file" "$TMP_FILE"; TMP_FILE=""
