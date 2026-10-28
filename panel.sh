@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#   APPS BEKES Panel v3.3
+#   APPS BEKES Panel v3.4
 #   لوحة تحكم رفع التطبيقات - متوافقة مع iOS NewTerm
 #   © B6_7E | بيكاس
 # ============================================================
@@ -113,7 +113,6 @@ confirm() {
     case "$value" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
-# ←─ إدخال مع الإبقاء على القيمة الحالية (بدون قص للحروف) ─→
 prompt_keep() {
     local label="$1" current="$2"
     local display="$current"
@@ -135,6 +134,27 @@ prompt_keep() {
     fi
 }
 
+# ←─ دالة اختيار القسم (محدثة للأقسام الخمسة) ─→
+select_section() {
+    echo "" >&2
+    printf "  %s[1]%s iOS\n" "$N_CYAN" "$NC" >&2
+    printf "  %s[2]%s Android\n" "$N_CYAN" "$NC" >&2
+    printf "  %s[3]%s Android TV\n" "$N_CYAN" "$NC" >&2
+    printf "  %s[4]%s Jailbreak (جلبريك)\n" "$N_CYAN" "$NC" >&2
+    printf "  %s[5]%s Root (روت)\n" "$N_CYAN" "$NC" >&2
+    echo "" >&2
+    printf "%s➤%s اختر القسم: " "$N_CYAN" "$NC" >&2
+    local c; IFS= read -r c || { echo; exit 0; }
+    case "$c" in
+        1) printf 'ios' ;;
+        2) printf 'android' ;;
+        3) printf 'tv' ;;
+        4) printf 'jailbreak' ;;
+        5) printf 'root' ;;
+        *) return 1 ;;
+    esac
+}
+
 # ---------- HTML ----------
 html_escape() {
     local s="$1"
@@ -143,7 +163,6 @@ html_escape() {
     printf '%s' "$s"
 }
 
-# ←─ فكّ الترميز (بلغة الباش الصافية لضمان سلامة العربية) ─→
 html_unescape() {
     local s="$1"
     s="${s//&amp;/&}"
@@ -386,18 +405,9 @@ edit_app() {
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_ORANGE" "$NC"
     printf "%s│      ✎  تعديل تطبيق موجود           │%s\n" "$N_ORANGE" "$NC"
     printf "%s╰─────────────────────────────────────╯%s\n" "$N_ORANGE" "$NC"
-    echo ""
-    printf "  %s[1]%s iOS\n" "$N_CYAN" "$NC"
-    printf "  %s[2]%s Android\n" "$N_CYAN" "$NC"
-    printf "  %s[3]%s Android TV\n" "$N_CYAN" "$NC"
-    echo ""
-    printf "%s➤%s اختر القسم: " "$N_CYAN" "$NC" >&2
-    local c; IFS= read -r c || { echo; exit 0; }
+
     local section
-    case "$c" in
-        1) section="ios" ;; 2) section="android" ;; 3) section="tv" ;;
-        *) printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1 ;;
-    esac
+    section=$(select_section) || { printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1; }
 
     local total; total=$(count_apps "$section")
     if [ "$total" -eq 0 ]; then
@@ -533,18 +543,9 @@ delete_app() {
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_HOT" "$NC"
     printf "%s│      🗑  حذف تطبيق من القائمة       │%s\n" "$N_HOT" "$NC"
     printf "%s╰─────────────────────────────────────╯%s\n" "$N_HOT" "$NC"
-    echo ""
-    printf "  %s[1]%s iOS\n" "$N_CYAN" "$NC"
-    printf "  %s[2]%s Android\n" "$N_CYAN" "$NC"
-    printf "  %s[3]%s Android TV\n" "$N_CYAN" "$NC"
-    echo ""
-    printf "%s➤%s اختر القسم: " "$N_CYAN" "$NC" >&2
-    local c; IFS= read -r c || { echo; exit 0; }
+
     local section
-    case "$c" in
-        1) section="ios" ;; 2) section="android" ;; 3) section="tv" ;;
-        *) printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1 ;;
-    esac
+    section=$(select_section) || { printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1; }
 
     local before; before=$(count_apps "$section")
     if [ "$before" -eq 0 ]; then
@@ -630,18 +631,9 @@ add_app() {
     printf "%s╭─────────────────────────────────────╮%s\n" "$N_LIME" "$NC"
     printf "%s│      ➕  إضافة تطبيق جديد           │%s\n" "$N_LIME" "$NC"
     printf "%s╰─────────────────────────────────────╯%s\n" "$N_LIME" "$NC"
-    echo ""
-    printf "  %s[1]%s iOS\n" "$N_CYAN" "$NC"
-    printf "  %s[2]%s Android\n" "$N_CYAN" "$NC"
-    printf "  %s[3]%s Android TV\n" "$N_CYAN" "$NC"
-    echo ""
-    printf "%s➤%s اختر القسم: " "$N_CYAN" "$NC" >&2
-    local c; IFS= read -r c || { echo; exit 0; }
+
     local section
-    case "$c" in
-        1) section="ios" ;; 2) section="android" ;; 3) section="tv" ;;
-        *) printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1 ;;
-    esac
+    section=$(select_section) || { printf "%s✗ اختيار غير صالح%s\n" "$N_RED" "$NC" >&2; return 1; }
 
     echo ""
     local name version desc icon link
@@ -777,6 +769,9 @@ banner() {
         "$N_GREY" "$NC" "$N_PINK" "$(count_apps ios)" "$NC" \
         "$N_GREY" "$NC" "$N_GOLD" "$(count_apps android)" "$NC" \
         "$N_GREY" "$NC" "$N_CYAN" "$(count_apps tv)" "$NC"
+    printf "  %sJailbreak:%s %s%s%s   %sRoot:%s %s%s%s\n" \
+        "$N_GREY" "$NC" "$N_ORANGE" "$(count_apps jailbreak)" "$NC" \
+        "$N_GREY" "$NC" "$N_RED" "$(count_apps root)" "$NC"
     echo ""
     hr
     echo ""
@@ -823,7 +818,7 @@ main() {
             2) edit_app ;;
             3) delete_app ;;
             4)
-                for s in ios android tv; do
+                for s in ios android tv jailbreak root; do
                     local n; n=$(count_apps "$s")
                     printf "%s╭── %s%s%s (%s%s%s) %s────%s\n" \
                         "$N_PURPLE" "$BOLD" "$s" "$NC" "$N_GOLD" "$n" "$NC" "$N_PURPLE" "$NC"
